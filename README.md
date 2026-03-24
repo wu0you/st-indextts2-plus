@@ -2,7 +2,7 @@
 
 基于 [indexTTS player](https://github.com/bronie-honkai/st-indextts2) 使用AI进行修改，让你的酒馆语音体验更加流畅。
 
-另外提供自己搜集的一些参考音频,各种女性配音，基本满足所有音色。
+另外分享自己搜集的一些参考音频和酒馆大佬分享的各种女性配音，基本满足所有音色。
 
 百度网盘:https://pan.baidu.com/s/1cl2HjNs4N5jSr_-KnfS71w?pwd=whze
 
