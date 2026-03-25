@@ -16,7 +16,9 @@
         autoInference: false, // 回复后自动推理
         autoPlay: false, // 推理完成后自动播放（需要浏览器已有用户交互）
         streamingPlay: false, // 逐句推理即时播放（推理完一句立即播放，无需等全部完成）
+        streamingSkipCount: 1, // 流式推理播放：推理N句后开始播放并继续推理下一句（1=即时播放，2=推理2句后播放第1句，以此类推）
         cacheImportPath: '\\\\SillyTavern\\\\data\\\\TTSsound',
+        ambientSoundPath: '', // 背景音目录路径（备用显示）
         ambientSoundVolume: 0.4, // 背景音独立音量 0.0 ~ 1.0
         ambientFadeDuration: 0, // 背景音淡入淡出时长(ms)，0=关闭
         ambientLoopByScene: false, // 场景循环播放：同场景段内背景音持续循环
@@ -2352,14 +2354,275 @@
         return { show, hide, updateProgress, updatePlayState, updateInfo };
     })();
 
+    // 流式推理播放辅助函数
+    async function streamInferAndPlay(msg, lines, triggerBtn, isSilent) {
+        const settings = getSettings();
+        const mesId = getMessageId(msg);
+        if (!mesId) return [];
+
+        const list = []; // 已推理的音频列表
+        const skipCount = settings.streamingSkipCount || 1;
+        let currentInferIndex = 0;
+        let currentPlayIndex = 0;
+        let isPlaying = false;
+        let currentAudio = null;
+        let inferDone = false;
+        let cachedCount = 0;
+
+        // 创建唯一会话ID用于流式播放
+        const sessionId = Date.now();
+
+        // 辅助函数：播放队列中的音频
+        const playNextAudio = async () => {
+            console.log('[IndexTTS2] Streaming: playNextAudio called, currentPlayIndex=' + currentPlayIndex + ', list.length=' + list.length);
+
+            // 如果队列为空，等待新内容
+            const waitForContent = () => {
+                return new Promise(resolve => {
+                    const checkInterval = setInterval(() => {
+                        if (currentPlayIndex < list.length) {
+                            clearInterval(checkInterval);
+                            resolve();
+                        } else if (inferDone) {
+                            clearInterval(checkInterval);
+                            resolve('done');
+                        }
+                    }, 50);
+                });
+            };
+
+            const waitResult = await waitForContent();
+            if (waitResult === 'done' || currentPlayIndex >= list.length) {
+                console.log('[IndexTTS2] Streaming: playback finished');
+                AmbientPlayer.stop(); // 停止背景音
+                if (currentPlayback.stop) currentPlayback.stop();
+                clearPlayingInMessage(msg);
+                return;
+            }
+
+            const item = list[currentPlayIndex];
+            if (!item) {
+                console.warn('[IndexTTS2] Streaming: invalid item at index', currentPlayIndex);
+                currentPlayIndex++;
+                playNextAudio();
+                return;
+            }
+
+            // 清理之前的音频
+            if (currentAudio) {
+                currentAudio.pause();
+                currentAudio.onended = null;
+                currentAudio.onerror = null;
+                currentAudio.src = '';
+            }
+
+            currentAudio = new Audio(item.blobUrl);
+            currentPlayback.audio = currentAudio;
+            currentPlayback.msg = msg;
+            currentPlayback.mesId = mesId;
+            currentPlayback.index = currentPlayIndex;
+            currentPlayback.sessionId = sessionId;
+
+            // 音量与速度
+            const vol = parseFloat(settings.volume || 1.0);
+            currentAudio.volume = Math.max(0, Math.min(1, vol));
+            currentAudio.playbackRate = parseFloat(settings.speed || 1.0);
+
+            // UI高亮
+            const encT = utf8ToBase64(item.text);
+            const encC = utf8ToBase64(item.character || '');
+            clearPlayingInMessage(msg);
+            setLinePlayingByEncoded(msg, encT, encC, true);
+
+            // 更新浮动播放器
+            const avatarEl = msg.querySelector('.avatar img');
+            let displayChar = item.character || 'Unknown';
+            if (displayChar.toLowerCase() === 'narrator' && avatarEl) {
+                const nameEl = msg.querySelector('.ch_name');
+                if (nameEl) displayChar = nameEl.textContent.trim();
+            }
+            TTSPlayerWindow.updateInfo({
+                name: displayChar,
+                text: item.text,
+                avatarUrl: avatarEl ? avatarEl.src : null
+            });
+
+            attachMiniPlayerToAudio(currentAudio, true);
+
+            // 场景背景音 - 流式播放时每个track都播放
+            console.log('[IndexTTS2][Streaming] Ambient playScene: ' + item.scene);
+            AmbientPlayer.playScene(item.scene || null);
+
+            // 播放结束回调
+            currentAudio.onended = () => {
+                setLinePlayingByEncoded(msg, encT, encC, false);
+                // 停止背景音（非最后一句用stopImmediate，最后一句用stop）
+                if (currentPlayIndex + 1 < list.length) {
+                    AmbientPlayer.stopImmediate();
+                } else {
+                    AmbientPlayer.stop();
+                }
+                currentPlayIndex++;
+                playNextAudio();
+            };
+
+            currentAudio.onerror = () => {
+                console.error('[IndexTTS2] Streaming track error at index:', currentPlayIndex);
+                setLinePlayingByEncoded(msg, encT, encC, false);
+                AmbientPlayer.stopImmediate();
+                currentPlayIndex++;
+                playNextAudio();
+            };
+
+            try {
+                await currentAudio.play();
+            } catch (e) {
+                if (e.name === 'NotAllowedError') {
+                    if (window.toastr) window.toastr.warning('浏览器已拦截自动播放，请先点击页面任意处');
+                    return;
+                }
+                // 出错则跳到下一句
+                currentPlayIndex++;
+                playNextAudio();
+            }
+        };
+
+        // 推理循环
+        const inferLoop = async () => {
+            console.log('[IndexTTS2] Streaming: starting inferLoop, lines.length=' + lines.length + ', skipCount=' + skipCount);
+            while (currentInferIndex < lines.length) {
+                // 只在播放开始后才检查 session 匹配
+                if (isPlaying && currentPlayback.sessionId !== sessionId) {
+                    console.log('[IndexTTS2] Streaming: inferLoop stopped due to session mismatch');
+                    return;
+                }
+
+                const line = lines[currentInferIndex];
+                if (!line.voice) {
+                    currentInferIndex++;
+                    continue;
+                }
+
+                try {
+                    const record = await ensureAudioRecord({
+                        text: line.text,
+                        character: line.character,
+                        voice: line.voice,
+                        emotion: line.emotion,
+                    });
+                    if (!record) {
+                        currentInferIndex++;
+                        continue;
+                    }
+
+                    if (record.isCached) cachedCount++;
+                    const blobUrl = URL.createObjectURL(record.blob);
+                    const newItem = {
+                        text: line.text,
+                        character: line.character,
+                        scene: line.scene || null,
+                        voice: line.voice,
+                        hash: record.hash,
+                        blobUrl,
+                    };
+
+                    // 添加到播放列表
+                    list.push(newItem);
+                    audioCache[mesId] = list;
+                    console.log('[IndexTTS2] Streaming: added item, list.length=' + list.length);
+
+                    // 通知UI更新进度
+                    if (window.toastr && !isSilent) {
+                        const progress = Math.round(((currentInferIndex + 1) / lines.length) * 100);
+                        window.toastr.info(`推理进度: ${currentInferIndex + 1}/${lines.length} (${progress}%)`, { timeOut: 1000 });
+                    }
+
+                    // 如果推理数量达到阈值，开始播放
+                    if (list.length >= skipCount && !isPlaying) {
+                        console.log('[IndexTTS2] Streaming: triggering playback, list.length=' + list.length + ', skipCount=' + skipCount);
+                        isPlaying = true;
+                        currentPlayIndex = 0;
+
+                        // 创建全局控制器
+                        currentPlayback.sessionId = sessionId;
+                        currentPlayback.controller = {
+                            pause: () => { if (currentAudio) currentAudio.pause(); },
+                            play: () => { if (currentAudio) currentAudio.play(); },
+                            seek: (percent) => {
+                                const targetTime = list.length * percent;
+                                const targetIndex = Math.min(Math.floor(targetTime), list.length - 1);
+                                if (targetIndex === currentPlayIndex && currentAudio) {
+                                    currentAudio.currentTime = targetTime - targetIndex;
+                                } else {
+                                    currentPlayIndex = targetIndex;
+                                    playNextAudio();
+                                }
+                            }
+                        };
+
+                        TTSPlayerWindow.show(msg, currentPlayback.controller);
+                        playNextAudio();
+                    }
+
+                } catch (e) {
+                    console.error('[IndexTTS2] Streaming infer error:', e);
+                }
+
+                currentInferIndex++;
+
+                // 如果推理完成了但还没开始播放（skipCount > list.length）
+                if (currentInferIndex >= lines.length && !isPlaying && list.length > 0) {
+                    inferDone = true;
+                    isPlaying = true;
+                    currentPlayIndex = 0;
+
+                    // 创建全局控制器
+                    currentPlayback.sessionId = sessionId;
+                    currentPlayback.controller = {
+                        pause: () => { if (currentAudio) currentAudio.pause(); },
+                        play: () => { if (currentAudio) currentAudio.play(); },
+                        seek: (percent) => {
+                            const targetTime = list.length * percent;
+                            const targetIndex = Math.min(Math.floor(targetTime), list.length - 1);
+                            if (targetIndex === currentPlayIndex && currentAudio) {
+                                currentAudio.currentTime = targetTime - targetIndex;
+                            } else {
+                                currentPlayIndex = targetIndex;
+                                playNextAudio();
+                            }
+                        }
+                    };
+
+                    TTSPlayerWindow.show(msg, currentPlayback.controller);
+                    playNextAudio();
+                }
+            }
+        };
+
+        // 开始推理
+        inferLoop();
+
+        return list;
+    }
+
     async function inferMessageAudios(msg, triggerBtn, isSilent = false) {
         if (!msg) return;
         const mesId = getMessageId(msg);
         if (!mesId) return;
 
-        // 已有缓存则直接使用
+        // 已有缓存则直接使用（非流式模式）
         if (audioCache[mesId] && audioCache[mesId].length) {
-            return audioCache[mesId];
+            const settings = getSettings();
+            // 如果启用了流式播放，先清空缓存重新推理
+            if (settings.streamingPlay) {
+                // 清空该消息的缓存，准备流式推理
+                audioCache[mesId].forEach(item => {
+                    if (item.blobUrl) URL.revokeObjectURL(item.blobUrl);
+                });
+                delete audioCache[mesId];
+            } else {
+                return audioCache[mesId];
+            }
         }
 
         // 推理锁：防止重复请求
@@ -2385,42 +2648,56 @@
             if (inferBtn) inferBtn.classList.add('indextts-inferring');
         }
 
+        const settings = getSettings();
+
         try {
             const cardId = getCardId();
             const lines = collectVNLinesFromMessage(msg);
             const list = [];
             const unvoicedCount = lines.filter(l => !l.voice).length;
-            let cachedCount = 0;
 
             if (!lines.length) {
                 if (!isSilent && window.toastr) window.toastr.warning('未在消息中发现符合格式的 [角色] 文本，请检查是否为 GAL 模式及剧本格式');
+                return [];
             } else if (unvoicedCount === lines.length) {
                 if (!isSilent && window.toastr) window.toastr.warning('发现角色对话但均未在配置表格中关联配音，请先点击配置绑定音色');
-            } else {
-                for (const line of lines) {
-                    try {
-                        if (!line.voice) continue;
+                return [];
+            }
 
-                        const record = await ensureAudioRecord({
-                            text: line.text,
-                            character: line.character,
-                            voice: line.voice,
-                            emotion: line.emotion,
-                        });
-                        if (!record) continue;
-                        if (record.isCached) cachedCount++;
-                        const blobUrl = URL.createObjectURL(record.blob);
-                        list.push({
-                            text: line.text,
-                            character: line.character,
-                            scene: line.scene || null,
-                            voice: line.voice,
-                            hash: record.hash,
-                            blobUrl,
-                        });
-                    } catch (e) {
-                        console.error('[IndexTTS2] inferMessageAudios line error:', e);
-                    }
+            // 流式推理播放模式
+            if (settings.streamingPlay) {
+                const skipCount = settings.streamingSkipCount || 1;
+                if (window.toastr && !isSilent) {
+                    window.toastr.info(`流式推理播放模式已启用（每推理 ${skipCount} 句后开始播放）`);
+                }
+                return await streamInferAndPlay(msg, lines, triggerBtn, isSilent);
+            }
+
+            // 传统模式：全部推理完成后再播放
+            let cachedCount = 0;
+            for (const line of lines) {
+                try {
+                    if (!line.voice) continue;
+
+                    const record = await ensureAudioRecord({
+                        text: line.text,
+                        character: line.character,
+                        voice: line.voice,
+                        emotion: line.emotion,
+                    });
+                    if (!record) continue;
+                    if (record.isCached) cachedCount++;
+                    const blobUrl = URL.createObjectURL(record.blob);
+                    list.push({
+                        text: line.text,
+                        character: line.character,
+                        scene: line.scene || null,
+                        voice: line.voice,
+                        hash: record.hash,
+                        blobUrl,
+                    });
+                } catch (e) {
+                    console.error('[IndexTTS2] inferMessageAudios line error:', e);
                 }
             }
 
@@ -2896,6 +3173,13 @@
                                 <label for="indextts-streaming-play">流式推理播放</label>
                                 <input type="checkbox" id="indextts-streaming-play"${settings.streamingPlay === true ? ' checked' : ''}>
                             </div>
+                            <div class="indextts-setting-row" id="indextts-streaming-skip-row" style="${settings.streamingPlay !== true ? 'display: none;' : ''}">
+                                <label for="indextts-streaming-skip-count">流式推理跳过数量</label>
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <input type="number" id="indextts-streaming-skip-count" class="text_pole" min="1" max="50" value="${settings.streamingSkipCount || 1}" style="width: 80px;">
+                                    <span style="font-size: 0.85em; opacity: 0.7;">句（1=即时播放，2=推理2句后播放...）</span>
+                                </div>
+                            </div>
                             <div class="indextts-setting-row">
                                 <label>默认朗读音色</label>
                                 <input type="text" id="indextts-voice" class="text_pole" value="${settings.defaultVoice}">
@@ -3021,6 +3305,62 @@
         bindCheckbox('#indextts-auto-play', 'autoPlay', false);
         bindCheckbox('#indextts-streaming-play', 'streamingPlay', false);
 
+        // 流式推理跳过数量设置
+        const streamingSkipRow = panel.querySelector('#indextts-streaming-skip-row');
+        const streamingSkipCount = panel.querySelector('#indextts-streaming-skip-count');
+        const streamingPlayCheckbox = panel.querySelector('#indextts-streaming-play');
+        const autoPlayCheckbox = panel.querySelector('#indextts-auto-play');
+
+        // 流式推理播放和推理后自动播放互斥逻辑
+        if (streamingPlayCheckbox) {
+            streamingPlayCheckbox.onchange = (e) => {
+                const s = getSettings();
+                if (e.target.checked) {
+                    // 启用流式推理播放时，关闭推理后自动播放
+                    s.streamingPlay = true;
+                    s.autoPlay = false;
+                    // 同时更新 UI 上的自动播放复选框
+                    if (autoPlayCheckbox) autoPlayCheckbox.checked = false;
+                    // 显示跳过数量设置行
+                    if (streamingSkipRow) streamingSkipRow.style.display = '';
+                } else {
+                    s.streamingPlay = false;
+                    // 隐藏跳过数量设置行
+                    if (streamingSkipRow) streamingSkipRow.style.display = 'none';
+                }
+                saveSettings();
+            };
+        }
+
+        // 推理后自动播放和流式推理播放互斥逻辑
+        if (autoPlayCheckbox) {
+            autoPlayCheckbox.onchange = (e) => {
+                const s = getSettings();
+                if (e.target.checked) {
+                    // 启用推理后自动播放时，关闭流式推理播放
+                    s.autoPlay = true;
+                    s.streamingPlay = false;
+                    // 同时更新 UI 上的流式推理播放复选框
+                    if (streamingPlayCheckbox) streamingPlayCheckbox.checked = false;
+                    // 隐藏跳过数量设置行
+                    if (streamingSkipRow) streamingSkipRow.style.display = 'none';
+                } else {
+                    s.autoPlay = false;
+                }
+                saveSettings();
+            };
+        }
+
+        if (streamingSkipCount) {
+            streamingSkipCount.onchange = (e) => {
+                const s = getSettings();
+                const countVal = parseInt(e.target.value) || 1;
+                s.streamingSkipCount = Math.max(1, Math.min(50, countVal));
+                e.target.value = s.streamingSkipCount;
+                saveSettings();
+            };
+        }
+
         // Voice
         const voiceInput = panel.querySelector('#indextts-voice');
         if (voiceInput) {
@@ -3090,26 +3430,48 @@
                     await AmbientPlayer.requestPermission();
                     const el = panel.querySelector('#indextts-ambient-path');
                     if (el) el.value = h.name;
+                    // 同时保存到 settings 作为备用
+                    const s = getSettings();
+                    s.ambientSoundPath = h.name;
+                    saveSettings();
                     if (window.toastr) window.toastr.success('背景音目录已设置: ' + h.name);
                 } catch (e) {
                     if (e.name !== 'AbortError') console.error('[IndexTTS2][Ambient]', e);
                 }
             };
-            // Init display
+            // Init display - 优先使用 handle，备用 settings
             const existingH = AmbientPlayer.getDirHandle();
             const ambPathEl = panel.querySelector('#indextts-ambient-path');
-            if (existingH && ambPathEl) ambPathEl.value = existingH.name;
+            const s = getSettings();
+            if (existingH && ambPathEl) {
+                ambPathEl.value = existingH.name;
+            } else if (s.ambientSoundPath && ambPathEl) {
+                // handle 失效时使用 settings 中的备用路径
+                ambPathEl.value = s.ambientSoundPath;
+            }
             // Show auth button if handle exists but may need re-authorization
+            // 或者有备用路径但 handle 失效（需要重新选择授权）
             const ambAuthBtn = panel.querySelector('#indextts-ambient-auth');
             if (ambAuthBtn) {
-                if (existingH) ambAuthBtn.style.display = 'inline-block';
+                if (existingH) {
+                    ambAuthBtn.style.display = 'inline-block';
+                } else if (s.ambientSoundPath) {
+                    // 有备用路径但 handle 失效，显示授权按钮
+                    ambAuthBtn.style.display = 'inline-block';
+                }
                 ambAuthBtn.onclick = async () => {
-                    const ok = await AmbientPlayer.requestPermission();
-                    if (ok) {
-                        ambAuthBtn.style.display = 'none';
-                        if (window.toastr) window.toastr.success('背景音目录授权成功');
-                    } else {
-                        if (window.toastr) window.toastr.error('授权失败，请重新选择目录');
+                    if (existingH) {
+                        const ok = await AmbientPlayer.requestPermission();
+                        if (ok) {
+                            ambAuthBtn.style.display = 'none';
+                            if (window.toastr) window.toastr.success('背景音目录授权成功');
+                        } else {
+                            if (window.toastr) window.toastr.error('授权失败，请重新选择目录');
+                        }
+                    } else if (s.ambientSoundPath) {
+                        // 需要重新选择目录
+                        if (window.toastr) window.toastr.info('请重新选择背景音目录以获取权限');
+                        ambientChooseBtn.click();
                     }
                 };
             }
@@ -3530,7 +3892,8 @@
                                 if (msg) {
                                     console.log('[IndexTTS2] Auto-inferring for message', mesId);
                                     await inferMessageAudios(msg, null, true); // silent = true
-                                    // 自动播放：推理完成后立即播放，需要用户已有交互才能绕过浏览器限制
+                                    // 自动播放：流式推理播放模式下已在 inferMessageAudios 内部处理
+                                    // 非流式模式下，仅当启用"推理后自动播放"时调用
                                     if (settings.autoPlay) {
                                         await autoPlayMessage(msg);
                                     }
