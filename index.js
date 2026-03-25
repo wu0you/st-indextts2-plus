@@ -3088,7 +3088,7 @@
                         
                         <!-- 预设管理 -->
                         <div class="indextts-setting-module">
-                            <div class="indextts-module-header">⚙ 预设管理</div>
+                            <div class="indextts-module-header">⚙️ 预设管理</div>
                             <div class="indextts-preset-bar">
                                 <select id="indextts-preset-select" class="text_pole"></select>
                                 <input type="text" id="indextts-preset-name" class="text_pole" placeholder="预设名称">
@@ -3149,7 +3149,7 @@
 
                         <!-- 模块2：播放与自动化 -->
                          <div class="indextts-setting-module">
-                            <div class="indextts-module-header">▶ 播放与自动化</div>
+                            <div class="indextts-module-header">▶️ 播放与自动化</div>
                             <div class="indextts-setting-row">
                                 <label>解析模式</label>
                                 <select id="indextts-parsing-mode" class="text_pole">
@@ -3166,15 +3166,15 @@
                                 <input type="checkbox" id="indextts-auto-inference"${settings.autoInference === true ? ' checked' : ''}>
                             </div>
                              <div class="indextts-setting-row checkbox-row">
-                                <label for="indextts-auto-play">推理后自动播放</label>
+                                <label for="indextts-auto-play">推理完毕后自动续播</label>
                                 <input type="checkbox" id="indextts-auto-play"${settings.autoPlay === true ? ' checked' : ''}>
                             </div>
                              <div class="indextts-setting-row checkbox-row">
-                                <label for="indextts-streaming-play">流式推理播放</label>
+                                <label for="indextts-streaming-play">推理完N句后自动续播</label>
                                 <input type="checkbox" id="indextts-streaming-play"${settings.streamingPlay === true ? ' checked' : ''}>
                             </div>
                             <div class="indextts-setting-row" id="indextts-streaming-skip-row" style="${settings.streamingPlay !== true ? 'display: none;' : ''}">
-                                <label for="indextts-streaming-skip-count">流式推理跳过数量</label>
+                                <label for="indextts-streaming-skip-count">推理句数</label>
                                 <div style="display: flex; align-items: center; gap: 8px;">
                                     <input type="number" id="indextts-streaming-skip-count" class="text_pole" min="1" max="50" value="${settings.streamingSkipCount || 1}" style="width: 80px;">
                                     <span style="font-size: 0.85em; opacity: 0.7;">句（1=即时播放，2=推理2句后播放...）</span>
@@ -3196,7 +3196,7 @@
 
                         <!-- 模块3：缓存管理 -->
                         <div class="indextts-setting-module">
-                            <div class="indextts-module-header">💾 音频缓存管理</div>
+                            <div class="indextts-module-header">🎙️ 参考音频&缓存管理</div>
                              <div class="indextts-path-container">
                                 <input type="text" id="indextts-local-path" class="indextts-path-display" value="${pathDisplay}" readonly title="${pathDisplay}">
                                 <button class="menu_button" id="indextts-choose-folder" title="选择本地文件夹">📂 选择</button>
@@ -3215,14 +3215,14 @@
 
                         <!-- 模剗4：背景音效 -->
                         <div class="indextts-setting-module">
-                            <div class="indextts-module-header">🎵 背景音效</div>
+                            <div class="indextts-module-header">🎵 场景音效</div>
                             <div class="indextts-path-container">
                                 <input type="text" id="indextts-ambient-path" class="indextts-path-display" value="" readonly placeholder="未选择背景音目录">
                                 <button class="menu_button" id="indextts-ambient-choose" title="选择背景音文件夹">📂 选择</button>
                                 <button class="menu_button" id="indextts-ambient-auth" title="重新授权目录读取权限" style="display:none;">🔄 授权</button>
                             </div>
                             <div class="indextts-setting-row">
-                                <label>背景音音量</label>
+                                <label>场景音音量</label>
                                 <input type="range" id="indextts-ambient-volume" class="indextts-slider" min="0" max="1" step="0.05" value="${settings.ambientSoundVolume ?? 0.4}">
                                 <span id="indextts-ambient-volume-val">${((settings.ambientSoundVolume ?? 0.4) * 100).toFixed(0)}%</span>
                             </div>
@@ -3241,7 +3241,7 @@
                                 音效文件命名需与场景名称一致，支持 .mp3 / .wav / .ogg / .m4a
                             </div>
                             <div class="indextts-setting-row checkbox-row">
-                                <label for="indextts-ambient-loop-scene">场景循环播放</label>
+                                <label for="indextts-ambient-loop-scene">同场景下循环播放场景音</label>
                                 <input type="checkbox" id="indextts-ambient-loop-scene" ${settings.ambientLoopByScene ? 'checked' : ''}>
                             </div>
                         </div>
