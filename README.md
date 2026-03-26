@@ -38,8 +38,9 @@ https://github.com/user-attachments/assets/bbcaed12-4d72-45fc-9404-a452b4b91ecf
    ```
    https://github.com/xiaoxiongweihu/st-indextts2
    ```
+   Index-tts-2.0 整合包下载：https://tcnlo9s668u9.feishu.cn/wiki/KRQ9wuqiViSOmJkfHxacNFfknjh
 2. 启动 IndexTTS2 后端服务（默认端口 `7880`）
-3. 在 SillyTavern 扩展面板中启用 **IndexTTS2 Player**
+4. 在 SillyTavern 扩展面板中启用 **IndexTTS2 Player**
 
 ---
 
