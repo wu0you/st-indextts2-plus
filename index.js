@@ -609,6 +609,19 @@
         }
 
         async function _loadScene(sceneName) {
+            // 写死后端地址
+            const base = 'http://127.0.0.1:9000/static/bjy';
+            const exts = ['mp3', 'wav', 'ogg'];
+            for (const ext of exts) {
+                const url = `${base}/${encodeURIComponent(sceneName)}.${ext}`;
+                const res = await fetch(url, { method: 'HEAD' });
+                if (res.ok) return url;
+            }
+            return null;
+        }
+
+        
+        async function _loadScene(sceneName) {
             console.log('[IndexTTS2][Ambient] _loadScene: sceneName=' + sceneName + ' dirHandle=' + (dirHandle ? dirHandle.name : 'NULL'));
             if (!dirHandle) { console.warn('[IndexTTS2][Ambient] _loadScene: dirHandle is null, 请在设置中选择背景音目录'); return null; }
             try {
