@@ -621,38 +621,38 @@
         }
 
         
-        async function _loadScene(sceneName) {
-            console.log('[IndexTTS2][Ambient] _loadScene: sceneName=' + sceneName + ' dirHandle=' + (dirHandle ? dirHandle.name : 'NULL'));
-            if (!dirHandle) { console.warn('[IndexTTS2][Ambient] _loadScene: dirHandle is null, 请在设置中选择背景音目录'); return null; }
-            try {
-                // First try queryPermission (no gesture needed)
-                let hasPerm = await queryPermission();
-                console.log('[IndexTTS2][Ambient] _loadScene: queryPermission=' + hasPerm);
-                if (!hasPerm) {
-                    // Try reading directly — some browsers allow read without explicit grant
-                    console.warn('[IndexTTS2][Ambient] 权限未授权，请在设置面板点击「🔄 授权」按钮');
-                    if (window.toastr) window.toastr.warning('背景音需要授权：请打开 IndexTTS2 设置 → 背景音效 → 点击「🔄 授权」', { timeOut: 6000 });
-                    return null;
-                }
-                // Try candidate file names: exact, plus common extensions
-                const candidates = [
-                    sceneName + '.mp3', sceneName + '.wav', sceneName + '.ogg',
-                    sceneName + '.m4a', sceneName + '.aac'
-                ];
-                for (const name of candidates) {
-                    try {
-                        console.log('[IndexTTS2][Ambient] _loadScene: trying file:', name);
-                        const fileHandle = await dirHandle.getFileHandle(name);
-                        const file = await fileHandle.getFile();
-                        const url = URL.createObjectURL(file);
-                        console.log('[IndexTTS2][Ambient] _loadScene: found! url=', url);
-                        return url;
-                    } catch (_) { /* not found, try next */ }
-                }
-                console.warn('[IndexTTS2][Ambient] _loadScene: no matching file for scene:', sceneName, '— tried:', candidates);
-            } catch (e) { console.warn('[IndexTTS2][Ambient] loadScene error:', e); }
-            return null;
-        }
+        // async function _loadScene(sceneName) {
+        //     console.log('[IndexTTS2][Ambient] _loadScene: sceneName=' + sceneName + ' dirHandle=' + (dirHandle ? dirHandle.name : 'NULL'));
+        //     if (!dirHandle) { console.warn('[IndexTTS2][Ambient] _loadScene: dirHandle is null, 请在设置中选择背景音目录'); return null; }
+        //     try {
+        //         // First try queryPermission (no gesture needed)
+        //         let hasPerm = await queryPermission();
+        //         console.log('[IndexTTS2][Ambient] _loadScene: queryPermission=' + hasPerm);
+        //         if (!hasPerm) {
+        //             // Try reading directly — some browsers allow read without explicit grant
+        //             console.warn('[IndexTTS2][Ambient] 权限未授权，请在设置面板点击「🔄 授权」按钮');
+        //             if (window.toastr) window.toastr.warning('背景音需要授权：请打开 IndexTTS2 设置 → 背景音效 → 点击「🔄 授权」', { timeOut: 6000 });
+        //             return null;
+        //         }
+        //         // Try candidate file names: exact, plus common extensions
+        //         const candidates = [
+        //             sceneName + '.mp3', sceneName + '.wav', sceneName + '.ogg',
+        //             sceneName + '.m4a', sceneName + '.aac'
+        //         ];
+        //         for (const name of candidates) {
+        //             try {
+        //                 console.log('[IndexTTS2][Ambient] _loadScene: trying file:', name);
+        //                 const fileHandle = await dirHandle.getFileHandle(name);
+        //                 const file = await fileHandle.getFile();
+        //                 const url = URL.createObjectURL(file);
+        //                 console.log('[IndexTTS2][Ambient] _loadScene: found! url=', url);
+        //                 return url;
+        //             } catch (_) { /* not found, try next */ }
+        //         }
+        //         console.warn('[IndexTTS2][Ambient] _loadScene: no matching file for scene:', sceneName, '— tried:', candidates);
+        //     } catch (e) { console.warn('[IndexTTS2][Ambient] loadScene error:', e); }
+        //     return null;
+        // }
 
         async function playScene(sceneName) {
             if (!sceneName) { stop(); return; }
